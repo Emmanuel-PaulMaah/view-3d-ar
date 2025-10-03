@@ -3,129 +3,63 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AR viewer demo</title>
-  <meta name="description" content="view 3D models and place them in AR on android (scene viewer) and iOS (quick look)" />
+  <title>ar viewer demo</title>
+  <meta name="description" content="view a .glb grenade model and place it in AR on android (google scene viewer)" />
 
-  <!-- model-viewer web component (loads Scene Viewer / Quick Look in AR) -->
+  <!-- model-viewer web component -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 
   <style>
     :root { --ui: rgba(0,0,0,.75); --uiText: #fff; }
     html, body { height: 100%; margin: 0; background:#111; color:#eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
     header { padding: 12px 16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    select, button { background: var(--ui); color: var(--uiText); border: 1px solid #333; border-radius: 8px; padding: 8px 10px; }
-    #viewer {
-      width: 100vw; height: calc(100vh - 64px);
-      background: #000; outline: none; display:block;
-    }
-    .hud {
-      position: absolute; bottom: 14px; left: 0; right: 0;
-      display: flex; justify-content: center; gap: 8px; pointer-events: none;
-    }
-    .hud > * { pointer-events:auto; }
-    .pill {
-      background: var(--ui); color: var(--uiText); border-radius: 999px;
-      padding: 8px 12px; font-size: 14px; display:inline-flex; align-items:center; gap:8px;
-      border:1px solid #333;
-    }
-    .credit { position: fixed; right: 10px; bottom: 10px; opacity:.7; font-size:12px; }
+    button { background: var(--ui); color: var(--uiText); border: 1px solid #333; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+    #viewer { width: 100vw; height: calc(100vh - 60px); background: #000; display:block; }
+    .note { opacity:.7; font-size: 13px; }
+    .credit { position: fixed; right: 10px; bottom: 10px; opacity:.6; font-size:12px; }
     a { color:#9ad; }
   </style>
 </head>
 <body>
   <header>
-    <strong>models:</strong>
-    <select id="picker" aria-label="choose model">
-      <!-- add/remove items; keys must match models in models.js -->
-      <option value="chair">chair (glb/usdz)</option>
-      <option value="robot">robot (glb only)</option>
-    </select>
-    <button id="enter-ar" title="enter AR if available">enter AR</button>
-    <span style="opacity:.7">gestures: rotate (1-finger), pan (2-finger), pinch (zoom/scale). in AR: drag to move, pinch to scale.</span>
+    <strong>grenade.glb</strong>
+    <button id="enter-ar" title="enter AR if available">enter ar</button>
+    <span class="note">gestures: rotate (1-finger), pan (2-finger), pinch (zoom/scale). android ar supports drag to move.</span>
   </header>
 
-  <!-- the viewer -->
+  <!-- single-model viewer -->
   <model-viewer id="viewer"
-    src="assets/models/chair.glb"
-    ios-src="assets/models/chair.usdz"
+    src="assets/models/grenade.glb"
+    alt="grenade 3d model"
     ar
     ar-modes="webxr scene-viewer quick-look"
     ar-placement="floor"
     ar-scale="auto"
     camera-controls
     touch-action="manipulation"
-    autoplay
     exposure="1"
     shadow-intensity="1"
     environment-image="neutral"
-    interaction-prompt="auto"
-    poster="assets/posters/chair.jpg"
-    alt="3d model">
+    interaction-prompt="auto">
   </model-viewer>
-
-  <div class="hud">
-    <div class="pill" id="tip">tip: tap ⤴ “enter AR” (android uses google scene viewer)</div>
-  </div>
 
   <div class="credit">built with <a href="https://modelviewer.dev/" target="_blank" rel="noreferrer">model-viewer</a></div>
 
   <script type="module">
-    // simple model registry. update paths to your files.
-    const MODELS = {
-      chair: {
-        glb: "assets/models/chair.glb",
-        usdz: "assets/models/chair.usdz",
-        poster: "assets/posters/chair.jpg",
-        alt: "modern chair"
-      },
-      robot: {
-        glb: "assets/models/robot.glb",
-        usdz: null,
-        poster: "assets/posters/robot.jpg",
-        alt: "friendly robot"
-      }
-    };
-
     const viewer = document.getElementById('viewer');
-    const picker = document.getElementById('picker');
     const enterAR = document.getElementById('enter-ar');
 
-    function loadModel(key) {
-      const m = MODELS[key];
-      if (!m) return;
-      viewer.src = m.glb;
-      viewer.setAttribute('alt', m.alt || key);
-      viewer.setAttribute('poster', m.poster || '');
-      if (m.usdz) {
-        viewer.setAttribute('ios-src', m.usdz);
-      } else {
-        viewer.removeAttribute('ios-src'); // iOS will just show 3D; AR disabled for this item
-      }
-      // reset camera so each model starts centered
-      if (viewer.reset && typeof viewer.reset === 'function') viewer.reset();
-    }
-
-    picker.addEventListener('change', (e) => loadModel(e.target.value));
     enterAR.addEventListener('click', async () => {
       try {
         const canActivate = await viewer.canActivateAR;
-        if (canActivate) viewer.activateAR();
-        else alert('AR not available on this device/browser.');
+        if (canActivate) {
+          viewer.activateAR();
+        } else {
+          alert('ar not available on this device/browser.\n(note: ios needs a .usdz to open ar quick look)');
+        }
       } catch (err) {
         console.error(err);
-        alert('could not start AR.');
-      }
-    });
-
-    // initial model
-    loadModel(picker.value);
-
-    // optional: show a “double-tap to recenter” hint after first interaction
-    let hinted = false;
-    viewer.addEventListener('interaction', () => {
-      if (!hinted) {
-        hinted = true;
-        document.getElementById('tip').textContent = 'in AR: drag to move on floor; pinch to scale; rotate gesture to rotate';
+        alert('could not start ar.');
       }
     });
   </script>
