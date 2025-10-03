@@ -2,13 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
-  />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <title>AR: grenade + wikipedia screen</title>
-  <meta name="description" content="WebXR AR with three.js modules: place a grenade model and a draggable 'screen' showing Wikipedia content." />
-  <!-- optional: silence favicon 404 -->
+  <meta name="description" content="WebXR AR with three.js modules: place a grenade model and a draggable screen showing Wikipedia content." />
+  <!-- silence favicon 404 -->
   <link rel="icon" href="data:,">
   <style>
     html, body { margin:0; height:100%; background:#000; color:#eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
@@ -22,7 +19,7 @@
       pointer-events: auto; background: rgba(0,0,0,.7); color:#fff; border:1px solid #333;
       border-radius: 999px; padding: 8px 12px; font-size: 14px;
     }
-    /* offscreen DOM where we inject Wikipedia and rasterize */
+    /* offscreen DOM we rasterize into a canvas */
     #offscreen {
       position: absolute; left: -99999px; top: -99999px; width: 640px; height: 1024px;
       overflow: auto; background: #fff; color:#111;
@@ -31,7 +28,7 @@
   </style>
 </head>
 <body>
-  <div id="msg">tap to place; tap near an object to grab, move phone to drag; release to drop. buttons switch target, scale, and scroll the page. (android chrome only)</div>
+  <div id="msg">tap to place; tap near an object to grab, move phone to drag; release to drop. buttons switch target, scale, and scroll. (android chrome only)</div>
 
   <div id="ui">
     <button class="pill" id="targetGrenade">target: grenade</button>
@@ -46,13 +43,13 @@
   <div id="offscreen"></div>
 
   <script type="module">
-    // ---- import ES modules (works on GitHub Pages over HTTPS) ----
+    // --- ES module imports (do NOT include any three.min.js global builds) ---
     import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
     import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
     import { ARButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/ARButton.js';
     import html2canvas from 'https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.esm.js';
 
-    // ---- three.js setup ----
+    // --- three.js + WebXR setup ---
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera();
 
@@ -63,10 +60,8 @@
     renderer.xr.enabled = true;
     document.body.appendChild(renderer.domElement);
 
-    // WebXR AR button (requires https + Chrome on Android)
     document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
 
-    // lighting
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.0));
 
     // placement reticle
@@ -78,13 +73,13 @@
     reticle.visible = false;
     scene.add(reticle);
 
-    // session state
+    // state
     let xrRefSpace = null;
     let hitTestSource = null;
-    let selecting = null;            // 'grenade' | 'screen' | null
-    let target = 'grenade';          // default target
+    let selecting = null;              // 'grenade' | 'screen' | null
+    let target = 'grenade';
 
-    // ---- grenade model ----
+    // --- grenade model ---
     const grenadeRoot = new THREE.Group();
     grenadeRoot.visible = false;
     scene.add(grenadeRoot);
@@ -93,10 +88,9 @@
     loader.load(
       'assets/models/grenade.glb',
       (gltf) => {
-        // normalize to ~15cm bbox
         const box = new THREE.Box3().setFromObject(gltf.scene);
         const size = new THREE.Vector3(); box.getSize(size);
-        const scale = 0.15 / Math.max(size.x, size.y, size.z || 0.15);
+        const scale = 0.15 / Math.max(size.x, size.y, size.z || 0.15); // ~15cm max dimension
         gltf.scene.scale.setScalar(scale);
         grenadeRoot.add(gltf.scene);
       },
@@ -104,14 +98,12 @@
       (e) => console.error('failed to load grenade.glb', e)
     );
 
-    // ---- "web page" canvas texture on a plane ----
+    // --- "web page" canvas texture on a plane ---
     const pageCanvas = document.createElement('canvas');
     pageCanvas.width = 640; pageCanvas.height = 1024;
     const pageCtx = pageCanvas.getContext('2d');
-
     pageCtx.fillStyle = '#ffffff'; pageCtx.fillRect(0,0,640,1024);
-    pageCtx.fillStyle = '#111'; pageCtx.font = '28px system-ui';
-    pageCtx.fillText('loading wikipedia…', 20, 50);
+    pageCtx.fillStyle = '#111'; pageCtx.font = '28px system-ui'; pageCtx.fillText('loading wikipedia…', 20, 50);
 
     const pageTexture = new THREE.CanvasTexture(pageCanvas);
     pageTexture.colorSpace = THREE.SRGBColorSpace;
@@ -127,13 +119,12 @@
     screenMesh.visible = false;
     scene.add(screenMesh);
 
-    // thin frame to make selection obvious
     screenMesh.add(new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.PlaneGeometry(screenWidthMeters, screenHeightMeters)),
       new THREE.LineBasicMaterial({ color: 0x00aaff })
     ));
 
-    // ---- fetch + rasterize Wikipedia (mobile-html endpoint is CORS-friendly) ----
+    // --- fetch + rasterize Wikipedia (mobile-html endpoint is CORS-friendly) ---
     const OFF = document.getElementById('offscreen');
     const WIKI_TITLE = 'Augmented_reality';
 
@@ -145,7 +136,6 @@
         const html = await resp.text();
         OFF.innerHTML = html;
 
-        // clean and style
         const style = document.createElement('style');
         style.textContent = `
           body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; }
@@ -176,9 +166,9 @@
       });
       const viewH = pageCanvas.height;
       const y = Math.min(OFF.scrollTop, canvas.height - viewH);
-      const ctx = pageCtx;
-      ctx.fillStyle = '#fff'; ctx.fillRect(0,0,pageCanvas.width,pageCanvas.height);
-      ctx.drawImage(canvas, 0, y, pageCanvas.width, viewH, 0, 0, pageCanvas.width, viewH);
+      pageCtx.fillStyle = '#fff';
+      pageCtx.fillRect(0,0,pageCanvas.width,pageCanvas.height);
+      pageCtx.drawImage(canvas, 0, y, pageCanvas.width, viewH, 0, 0, pageCanvas.width, viewH);
       pageTexture.needsUpdate = true;
     }
 
@@ -190,7 +180,7 @@
 
     loadWikipedia();
 
-    // ---- AR session + hit testing ----
+    // --- AR session + hit testing ---
     const controller = renderer.xr.getController(0);
     scene.add(controller);
 
@@ -209,7 +199,6 @@
         }
       }
     });
-
     controller.addEventListener('selectend', () => { selecting = null; });
 
     function pickNearest() {
@@ -232,10 +221,7 @@
       xrRefSpace = await session.requestReferenceSpace('local');
       const viewerSpace = await session.requestReferenceSpace('viewer');
       hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-
-      session.addEventListener('end', () => {
-        hitTestSource = null; xrRefSpace = null;
-      });
+      session.addEventListener('end', () => { hitTestSource = null; xrRefSpace = null; });
     });
 
     renderer.setAnimationLoop((t, frame) => {
@@ -258,7 +244,7 @@
       renderer.render(scene, camera);
     });
 
-    // ---- UI wiring ----
+    // --- UI wiring ---
     const $ = (id) => document.getElementById(id);
     $('targetGrenade').onclick = () => { target = 'grenade'; $('targetGrenade').style.opacity = '1'; $('targetScreen').style.opacity = '.6'; };
     $('targetScreen').onclick = () => { target = 'screen'; $('targetGrenade').style.opacity = '.6'; $('targetScreen').style.opacity = '1'; };
@@ -267,7 +253,6 @@
     $('scrollUp').onclick   = () => scrollBy(-SCROLL_STEP);
     $('scrollDown').onclick = () => scrollBy(SCROLL_STEP);
 
-    // resize
     addEventListener('resize', () => {
       renderer.setSize(innerWidth, innerHeight);
       camera.aspect = innerWidth / innerHeight;
