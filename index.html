@@ -2,261 +2,131 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-  <title>AR: grenade + wikipedia screen</title>
-  <meta name="description" content="WebXR AR with three.js modules: place a grenade model and a draggable screen showing Wikipedia content." />
-  <!-- silence favicon 404 -->
-  <link rel="icon" href="data:,">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AR viewer demo</title>
+  <meta name="description" content="view 3D models and place them in AR on android (scene viewer) and iOS (quick look)" />
+
+  <!-- model-viewer web component (loads Scene Viewer / Quick Look in AR) -->
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+
   <style>
-    html, body { margin:0; height:100%; background:#000; color:#eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-    #msg { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.7); padding: 6px 10px; border:1px solid #333; border-radius: 8px; font-size:13px; z-index: 3; }
-    #ui {
-      position: fixed; left: 0; right: 0; bottom: 0; padding: 8px;
-      display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;
-      pointer-events: none; z-index: 3;
+    :root { --ui: rgba(0,0,0,.75); --uiText: #fff; }
+    html, body { height: 100%; margin: 0; background:#111; color:#eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    header { padding: 12px 16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    select, button { background: var(--ui); color: var(--uiText); border: 1px solid #333; border-radius: 8px; padding: 8px 10px; }
+    #viewer {
+      width: 100vw; height: calc(100vh - 64px);
+      background: #000; outline: none; display:block;
     }
+    .hud {
+      position: absolute; bottom: 14px; left: 0; right: 0;
+      display: flex; justify-content: center; gap: 8px; pointer-events: none;
+    }
+    .hud > * { pointer-events:auto; }
     .pill {
-      pointer-events: auto; background: rgba(0,0,0,.7); color:#fff; border:1px solid #333;
-      border-radius: 999px; padding: 8px 12px; font-size: 14px;
+      background: var(--ui); color: var(--uiText); border-radius: 999px;
+      padding: 8px 12px; font-size: 14px; display:inline-flex; align-items:center; gap:8px;
+      border:1px solid #333;
     }
-    /* offscreen DOM we rasterize into a canvas */
-    #offscreen {
-      position: absolute; left: -99999px; top: -99999px; width: 640px; height: 1024px;
-      overflow: auto; background: #fff; color:#111;
-    }
-    #offscreen * { max-width: 100% !important; }
+    .credit { position: fixed; right: 10px; bottom: 10px; opacity:.7; font-size:12px; }
+    a { color:#9ad; }
   </style>
 </head>
 <body>
-  <div id="msg">tap to place; tap near an object to grab, move phone to drag; release to drop. buttons switch target, scale, and scroll. (android chrome only)</div>
+  <header>
+    <strong>models:</strong>
+    <select id="picker" aria-label="choose model">
+      <!-- add/remove items; keys must match models in models.js -->
+      <option value="chair">chair (glb/usdz)</option>
+      <option value="robot">robot (glb only)</option>
+    </select>
+    <button id="enter-ar" title="enter AR if available">enter AR</button>
+    <span style="opacity:.7">gestures: rotate (1-finger), pan (2-finger), pinch (zoom/scale). in AR: drag to move, pinch to scale.</span>
+  </header>
 
-  <div id="ui">
-    <button class="pill" id="targetGrenade">target: grenade</button>
-    <button class="pill" id="targetScreen">target: screen</button>
-    <button class="pill" id="scaleDown">scale −</button>
-    <button class="pill" id="scaleUp">scale +</button>
-    <button class="pill" id="scrollUp">scroll ↑</button>
-    <button class="pill" id="scrollDown">scroll ↓</button>
-    <a class="pill" id="openLink" href="https://en.m.wikipedia.org/wiki/Augmented_reality" target="_blank" rel="noopener">open full page ↗</a>
+  <!-- the viewer -->
+  <model-viewer id="viewer"
+    src="assets/models/chair.glb"
+    ios-src="assets/models/chair.usdz"
+    ar
+    ar-modes="webxr scene-viewer quick-look"
+    ar-placement="floor"
+    ar-scale="auto"
+    camera-controls
+    touch-action="manipulation"
+    autoplay
+    exposure="1"
+    shadow-intensity="1"
+    environment-image="neutral"
+    interaction-prompt="auto"
+    poster="assets/posters/chair.jpg"
+    alt="3d model">
+  </model-viewer>
+
+  <div class="hud">
+    <div class="pill" id="tip">tip: tap ⤴ “enter AR” (android uses google scene viewer)</div>
   </div>
 
-  <div id="offscreen"></div>
+  <div class="credit">built with <a href="https://modelviewer.dev/" target="_blank" rel="noreferrer">model-viewer</a></div>
 
   <script type="module">
-    // --- ES module imports (do NOT include any three.min.js global builds) ---
-    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
-    import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
-    import { ARButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/ARButton.js';
-    import html2canvas from 'https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.esm.js';
-
-    // --- three.js + WebXR setup ---
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera();
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.xr.enabled = true;
-    document.body.appendChild(renderer.domElement);
-
-    document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
-
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.0));
-
-    // placement reticle
-    const reticle = new THREE.Mesh(
-      new THREE.RingGeometry(0.07, 0.08, 32).rotateX(-Math.PI/2),
-      new THREE.MeshBasicMaterial({ color: 0x00ffaa })
-    );
-    reticle.matrixAutoUpdate = false;
-    reticle.visible = false;
-    scene.add(reticle);
-
-    // state
-    let xrRefSpace = null;
-    let hitTestSource = null;
-    let selecting = null;              // 'grenade' | 'screen' | null
-    let target = 'grenade';
-
-    // --- grenade model ---
-    const grenadeRoot = new THREE.Group();
-    grenadeRoot.visible = false;
-    scene.add(grenadeRoot);
-
-    const loader = new GLTFLoader();
-    loader.load(
-      'assets/models/grenade.glb',
-      (gltf) => {
-        const box = new THREE.Box3().setFromObject(gltf.scene);
-        const size = new THREE.Vector3(); box.getSize(size);
-        const scale = 0.15 / Math.max(size.x, size.y, size.z || 0.15); // ~15cm max dimension
-        gltf.scene.scale.setScalar(scale);
-        grenadeRoot.add(gltf.scene);
+    // simple model registry. update paths to your files.
+    const MODELS = {
+      chair: {
+        glb: "assets/models/chair.glb",
+        usdz: "assets/models/chair.usdz",
+        poster: "assets/posters/chair.jpg",
+        alt: "modern chair"
       },
-      undefined,
-      (e) => console.error('failed to load grenade.glb', e)
-    );
+      robot: {
+        glb: "assets/models/robot.glb",
+        usdz: null,
+        poster: "assets/posters/robot.jpg",
+        alt: "friendly robot"
+      }
+    };
 
-    // --- "web page" canvas texture on a plane ---
-    const pageCanvas = document.createElement('canvas');
-    pageCanvas.width = 640; pageCanvas.height = 1024;
-    const pageCtx = pageCanvas.getContext('2d');
-    pageCtx.fillStyle = '#ffffff'; pageCtx.fillRect(0,0,640,1024);
-    pageCtx.fillStyle = '#111'; pageCtx.font = '28px system-ui'; pageCtx.fillText('loading wikipedia…', 20, 50);
+    const viewer = document.getElementById('viewer');
+    const picker = document.getElementById('picker');
+    const enterAR = document.getElementById('enter-ar');
 
-    const pageTexture = new THREE.CanvasTexture(pageCanvas);
-    pageTexture.colorSpace = THREE.SRGBColorSpace;
+    function loadModel(key) {
+      const m = MODELS[key];
+      if (!m) return;
+      viewer.src = m.glb;
+      viewer.setAttribute('alt', m.alt || key);
+      viewer.setAttribute('poster', m.poster || '');
+      if (m.usdz) {
+        viewer.setAttribute('ios-src', m.usdz);
+      } else {
+        viewer.removeAttribute('ios-src'); // iOS will just show 3D; AR disabled for this item
+      }
+      // reset camera so each model starts centered
+      if (viewer.reset && typeof viewer.reset === 'function') viewer.reset();
+    }
 
-    const screenWidthMeters = 0.32;
-    const aspect = pageCanvas.width / pageCanvas.height; // 0.625
-    const screenHeightMeters = screenWidthMeters / aspect;
-
-    const screenMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(screenWidthMeters, screenHeightMeters),
-      new THREE.MeshBasicMaterial({ map: pageTexture })
-    );
-    screenMesh.visible = false;
-    scene.add(screenMesh);
-
-    screenMesh.add(new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.PlaneGeometry(screenWidthMeters, screenHeightMeters)),
-      new THREE.LineBasicMaterial({ color: 0x00aaff })
-    ));
-
-    // --- fetch + rasterize Wikipedia (mobile-html endpoint is CORS-friendly) ---
-    const OFF = document.getElementById('offscreen');
-    const WIKI_TITLE = 'Augmented_reality';
-
-    async function loadWikipedia() {
+    picker.addEventListener('change', (e) => loadModel(e.target.value));
+    enterAR.addEventListener('click', async () => {
       try {
-        const resp = await fetch(`https://en.m.wikipedia.org/api/rest_v1/page/mobile-html/${encodeURIComponent(WIKI_TITLE)}`, {
-          headers: { accept: 'text/html' }, mode: 'cors', cache: 'no-cache'
-        });
-        const html = await resp.text();
-        OFF.innerHTML = html;
-
-        const style = document.createElement('style');
-        style.textContent = `
-          body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; }
-          #content, .content, body { background:#fff; color:#111; }
-          img, svg, video { max-width: 100% !important; height: auto !important; }
-        `;
-        OFF.prepend(style);
-
-        await rasterize();
-      } catch (e) {
-        console.warn('wikipedia fetch failed', e);
-        pageCtx.fillStyle = '#f8d7da'; pageCtx.fillRect(0,0,640,1024);
-        pageCtx.fillStyle = '#721c24'; pageCtx.font = '24px system-ui';
-        pageCtx.fillText('unable to render live page.', 20, 60);
-        pageCtx.fillText('use the link button ↗', 20, 100);
-        pageTexture.needsUpdate = true;
-      }
-    }
-
-    async function rasterize() {
-      const canvas = await html2canvas(OFF, {
-        backgroundColor: '#ffffff',
-        scale: 1,
-        useCORS: true,
-        allowTaint: false,
-        windowWidth: OFF.scrollWidth,
-        windowHeight: OFF.scrollHeight
-      });
-      const viewH = pageCanvas.height;
-      const y = Math.min(OFF.scrollTop, canvas.height - viewH);
-      pageCtx.fillStyle = '#fff';
-      pageCtx.fillRect(0,0,pageCanvas.width,pageCanvas.height);
-      pageCtx.drawImage(canvas, 0, y, pageCanvas.width, viewH, 0, 0, pageCanvas.width, viewH);
-      pageTexture.needsUpdate = true;
-    }
-
-    const SCROLL_STEP = 480;
-    async function scrollBy(delta) {
-      OFF.scrollTop = Math.max(0, Math.min(OFF.scrollHeight - OFF.clientHeight, OFF.scrollTop + delta));
-      await rasterize();
-    }
-
-    loadWikipedia();
-
-    // --- AR session + hit testing ---
-    const controller = renderer.xr.getController(0);
-    scene.add(controller);
-
-    controller.addEventListener('selectstart', () => {
-      const hit = pickNearest();
-      if (hit) {
-        selecting = hit;
-      } else if (reticle.visible) {
-        if (target === 'grenade') {
-          grenadeRoot.position.setFromMatrixPosition(reticle.matrix);
-          grenadeRoot.visible = true;
-        } else {
-          screenMesh.position.setFromMatrixPosition(reticle.matrix);
-          screenMesh.lookAt(camera.position);
-          screenMesh.visible = true;
-        }
+        const canActivate = await viewer.canActivateAR;
+        if (canActivate) viewer.activateAR();
+        else alert('AR not available on this device/browser.');
+      } catch (err) {
+        console.error(err);
+        alert('could not start AR.');
       }
     });
-    controller.addEventListener('selectend', () => { selecting = null; });
 
-    function pickNearest() {
-      if (!reticle.visible) return null;
-      const retP = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
-      let best = null, bestD = Infinity;
-      if (grenadeRoot.visible) {
-        const p = grenadeRoot.getWorldPosition(new THREE.Vector3());
-        const d = p.distanceTo(retP); if (d < bestD && d < 0.25) { best = 'grenade'; bestD = d; }
+    // initial model
+    loadModel(picker.value);
+
+    // optional: show a “double-tap to recenter” hint after first interaction
+    let hinted = false;
+    viewer.addEventListener('interaction', () => {
+      if (!hinted) {
+        hinted = true;
+        document.getElementById('tip').textContent = 'in AR: drag to move on floor; pinch to scale; rotate gesture to rotate';
       }
-      if (screenMesh.visible) {
-        const p = screenMesh.getWorldPosition(new THREE.Vector3());
-        const d = p.distanceTo(retP); if (d < bestD && d < 0.35) { best = 'screen'; bestD = d; }
-      }
-      return best;
-    }
-
-    renderer.xr.addEventListener('sessionstart', async () => {
-      const session = renderer.xr.getSession();
-      xrRefSpace = await session.requestReferenceSpace('local');
-      const viewerSpace = await session.requestReferenceSpace('viewer');
-      hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-      session.addEventListener('end', () => { hitTestSource = null; xrRefSpace = null; });
-    });
-
-    renderer.setAnimationLoop((t, frame) => {
-      if (frame && hitTestSource && xrRefSpace) {
-        const hitResults = frame.getHitTestResults(hitTestSource);
-        if (hitResults.length > 0) {
-          const hit = hitResults[0];
-          const pose = hit.getPose(xrRefSpace);
-          reticle.visible = true;
-          reticle.matrix.fromArray(pose.transform.matrix);
-          if (selecting) {
-            const pos = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
-            if (selecting === 'grenade') grenadeRoot.position.copy(pos);
-            else screenMesh.position.copy(pos);
-          }
-        } else {
-          reticle.visible = false;
-        }
-      }
-      renderer.render(scene, camera);
-    });
-
-    // --- UI wiring ---
-    const $ = (id) => document.getElementById(id);
-    $('targetGrenade').onclick = () => { target = 'grenade'; $('targetGrenade').style.opacity = '1'; $('targetScreen').style.opacity = '.6'; };
-    $('targetScreen').onclick = () => { target = 'screen'; $('targetGrenade').style.opacity = '.6'; $('targetScreen').style.opacity = '1'; };
-    $('scaleUp').onclick    = () => (target === 'grenade' ? grenadeRoot : screenMesh).scale.multiplyScalar(1.15);
-    $('scaleDown').onclick  = () => (target === 'grenade' ? grenadeRoot : screenMesh).scale.multiplyScalar(1/1.15);
-    $('scrollUp').onclick   = () => scrollBy(-SCROLL_STEP);
-    $('scrollDown').onclick = () => scrollBy(SCROLL_STEP);
-
-    addEventListener('resize', () => {
-      renderer.setSize(innerWidth, innerHeight);
-      camera.aspect = innerWidth / innerHeight;
-      camera.updateProjectionMatrix();
     });
   </script>
 </body>
